@@ -1,0 +1,94 @@
+import pandas as pd
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.orm import declarative_base, Session
+from datetime import datetime, timedelta
+from airflow import DAG
+from airflow.operators.python_operator import PythonOperator
+from airflow.hooks.base_hook import BaseHook
+import logging
+
+Base = declarative_base()
+
+# Datenbankmodell definieren
+class Product(Base):
+    __tablename__ = 'products'
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    category = Column(String)
+
+class Sale(Base):
+    __tablename__ = 'sales'
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, ForeignKey('products.id'))
+    quantity = Column(Integer)
+    price = Column(Integer)
+    timestamp = Column(DateTime)
+
+# Schritt 1: Datenextraktion
+def extract_data():
+    try:
+        # Annahme: Die CSV-Dateien befinden sich im gleichen Verzeichnis wie dieses Skript
+        products_data = pd.read_csv('products.csv')
+        sales_data = pd.read_csv('sales_data.csv')
+        return products_data, sales_data
+    except Exception as e:
+        logging.error(f"Fehler bei der Datenextraktion: {str(e)}")
+        raise e
+
+# Schritt 2: Datenbereinigung und Transformation
+def clean_and_transform_data(products_data, sales_data):
+    try:
+        # Hier kannst du komplexe Transformationen entsprechend deinen Anforderungen durchführen
+        return products_data, sales_data
+    except Exception as e:
+        logging.error(f"Fehler bei der Datenbereinigung und Transformation: {str(e)}")
+        raise e
+
+# Schritt 3: Datenladen in SQLite
+def load_data_to_database(products_data, sales_data):
+    try:
+        engine = create_engine('sqlite:///sales_data_warehouse.db')
+        Base.metadata.create_all(engine)
+
+        # Produkte in die Datenbank laden
+        products_data.to_sql('products', engine, index=False, if_exists='replace')
+
+        # Verkäufe in die Datenbank laden
+        sales_data['timestamp'] = pd.to_datetime(sales_data['timestamp'])
+        sales_data.to_sql('sales', engine, index=False, if_exists='replace')
+        
+        logging.info("Daten erfolgreich in die Datenbank geladen.")
+    except Exception as e:
+        logging.error(f"Fehler beim Laden der Daten in die Datenbank: {str(e)}")
+        raise e
+
+# Schritt 4: Automatisierung mit Apache Airflow
+dag = DAG('sales_data_warehousing', 
+          schedule_interval='@monthly',  # monatliche Ausführung
+          start_date=datetime(2023, 1, 1),  # Startdatum der Ausführung
+          catchup=False  # Verhindert die Ausführung von verpassten Monaten
+)
+
+# Tasks definieren
+extract_task = PythonOperator(
+    task_id='extract_data',
+    python_callable=extract_data,
+    dag=dag
+)
+
+transform_task = PythonOperator(
+    task_id='clean_and_transform_data',
+    python_callable=clean_and_transform_data,
+    provide_context=True,
+    dag=dag
+)
+
+load_task = PythonOperator(
+    task_id='load_data_to_database',
+    python_callable=load_data_to_database,
+    provide_context=True,
+    dag=dag
+)
+
+# Reihenfolge der Tasks festlegen
+extract_task >> transform_task >> load_task
